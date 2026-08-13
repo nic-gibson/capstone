@@ -23,7 +23,7 @@ Usage
 import numpy as np
 import matplotlib.pyplot as plt
 
-from bayes_tools import normalize
+from bayes_tools import normalize, from_scaled_units
 
 
 def _check_dim(bounds, expected):
@@ -47,6 +47,7 @@ def plot_1d_bo(
     acq_kwargs=None,
     n_grid=300,
     true_optimum=None,
+    y_scale=None,
     figsize=(8, 6),
 ):
     """
@@ -69,6 +70,15 @@ def plot_1d_bo(
     true_optimum : float, optional
         If known (e.g. for a synthetic benchmark), draws a vertical
         reference line.
+    y_scale : float, optional
+        Set this if the GP was fit on bayes_tools.to_scaled_units(y, y_scale)
+        (e.g. because the true y-scale is far from O(1), making default
+        xi/kappa meaningless) -- multiplies the mean/CI/observations back
+        into real units before plotting. Since this is a linear rescale,
+        no asymmetric-interval correction is needed (unlike a nonlinear
+        transform): the CI just scales directly. `y` should be passed in
+        the SAME units the GP was fit on either way (raw if y_scale=None,
+        scaled if y_scale is given).
     figsize : tuple
 
     Returns
@@ -88,6 +98,13 @@ def plot_1d_bo(
     mu, sigma = gp.predict(x_grid_norm, return_std=True)
     acq_vals = acquisition_fn(x_grid_norm, gp, **acq_kwargs)
 
+    if y_scale is not None:
+        mu = from_scaled_units(mu, y_scale)
+        sigma = from_scaled_units(sigma, y_scale)
+        y_plot = from_scaled_units(y, y_scale)
+    else:
+        y_plot = y
+
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=figsize, sharex=True,
         gridspec_kw={"height_ratios": [3, 1]},
@@ -102,7 +119,7 @@ def plot_1d_bo(
     # Colour observations by iteration order to show search trajectory.
     order = np.arange(len(y))
     sc = ax1.scatter(
-        X.ravel(), y, c=order, cmap="autumn_r", edgecolor="black",
+        X.ravel(), y_plot, c=order, cmap="autumn_r", edgecolor="black",
         zorder=5, label="Observations", s=50,
     )
     if len(y) > 1:
@@ -138,6 +155,7 @@ def plot_2d_bo(
     acq_kwargs=None,
     n_grid=100,
     true_optimum=None,
+    y_scale=None,
     figsize=(16, 5),
 ):
     """
@@ -158,6 +176,14 @@ def plot_2d_bo(
         Resolution per axis of the plotting grid (n_grid^2 GP predictions).
     true_optimum : array-like, shape (2,), optional
         If known, marked with a green star.
+    y_scale : float, optional
+        Set this if the GP was fit on bayes_tools.to_scaled_units(y, y_scale).
+        Multiplies the GP-mean panel and observation colours back into
+        real units (a linear rescale, so no asymmetric correction is
+        needed -- the std panel could equally be shown in either unit,
+        but is left in scaled units since "uncertainty relative to the
+        rescaled target" is what the acquisition function actually acts
+        on). `y` should be passed in the same units the GP was fit on.
     figsize : tuple
 
     Returns
@@ -178,13 +204,16 @@ def plot_2d_bo(
     grid_norm = normalize(grid, bounds)
 
     mu, sigma = gp.predict(grid_norm, return_std=True)
-    mu = mu.reshape(X1.shape)
+    mu_plot = from_scaled_units(mu, y_scale) if y_scale is not None else mu
+    y_plot = from_scaled_units(y, y_scale) if y_scale is not None else y
+    mu_plot = mu_plot.reshape(X1.shape)
     sigma = sigma.reshape(X1.shape)
     acq = acquisition_fn(grid_norm, gp, **acq_kwargs).reshape(X1.shape)
 
     fig, axes = plt.subplots(1, 3, figsize=figsize)
+    mean_title = "GP mean" if y_scale is None else "GP mean (real units)"
     panels = [
-        (mu, "GP mean", "viridis"),
+        (mu_plot, mean_title, "viridis"),
         (sigma, "GP std (uncertainty)", "magma"),
         (acq, "Acquisition", "plasma"),
     ]
@@ -195,9 +224,9 @@ def plot_2d_bo(
 
         # Observations coloured by y value, same colormap as the mean
         # panel for the GP-mean plot, otherwise white for contrast.
-        if title == "GP mean":
+        if title == mean_title:
             ax.scatter(
-                X[:, 0], X[:, 1], c=y, cmap=cmap, edgecolor="black",
+                X[:, 0], X[:, 1], c=y_plot, cmap=cmap, edgecolor="black",
                 s=50, zorder=5, vmin=data.min(), vmax=data.max(),
             )
         else:
@@ -448,7 +477,7 @@ def plot_bo_diagnostics(history, bounds, maximize=True, figsize=(12, 9)):
 def plot_nd_slices(
     X, y, bounds, gp, acquisition_fn, x_next,
     acq_kwargs=None, center=None, dims=None, n_grid=200,
-    maximize=True, ncols=4, obs_tol_frac=0.1, figsize=None,
+    maximize=True, ncols=4, obs_tol_frac=0.1, y_scale=None, figsize=None,
 ):
     """
     Generalises plot_1d_bo to D > 3: hold every dimension fixed at
@@ -478,6 +507,12 @@ def plot_nd_slices(
         `bayes_tools.get_length_scales` to rank dimensions by sensitivity
         and pass only the most sensitive ones here if D is large and you
         don't want 8 panels.
+    y_scale : float, optional
+        Set this if the GP was fit on bayes_tools.to_scaled_units(y, y_scale)
+        -- multiplies each slice's mean/CI/observations back into real
+        units before plotting (a linear rescale, so no asymmetric
+        correction is needed). `X`, `y`, and `center` should all be in
+        the same units the GP was fit on.
     obs_tol_frac : float
         Observations get overlaid on a slice only if every *other*
         dimension is within `obs_tol_frac` of that dimension's range from
@@ -520,6 +555,9 @@ def plot_nd_slices(
 
         mu, sigma = gp.predict(grid_norm, return_std=True)
         acq_vals = acquisition_fn(grid_norm, gp, **acq_kwargs)
+        if y_scale is not None:
+            mu = from_scaled_units(mu, y_scale)
+            sigma = from_scaled_units(sigma, y_scale)
 
         ax_acq = ax.twinx()
         ax.plot(grid_vals, mu, "b-", lw=1.8, zorder=3)
@@ -545,7 +583,8 @@ def plot_nd_slices(
         else:
             close = np.ones(len(y), dtype=bool)
         if close.any():
-            ax.scatter(X[close, dim], y[close], c="black", s=25, zorder=5)
+            y_obs_plot = from_scaled_units(y[close], y_scale) if y_scale is not None else y[close]
+            ax.scatter(X[close, dim], y_obs_plot, c="black", s=25, zorder=5)
 
         ax.set_title(f"x{dim}", fontsize=10)
         ax.set_ylabel("f(x)", fontsize=8, color="tab:blue")
@@ -561,7 +600,7 @@ def plot_nd_slices(
     return fig
 
 
-def plot_loo_calibration(y, pred_mean, pred_std, figsize=(10, 4.5)):
+def plot_loo_calibration(y, pred_mean, pred_std, y_scale=None, figsize=(10, 4.5)):
     """
     Leave-one-out calibration check for the GP surrogate (feed it the
     output of `bayes_tools.loo_predictions`). This is the main way to
@@ -579,14 +618,21 @@ def plot_loo_calibration(y, pred_mean, pred_std, figsize=(10, 4.5)):
     Right panel: standardized residuals z = (actual - predicted) /
     predicted_std. Should look roughly like a standard normal (centred
     near 0, most mass within +/-2) if the GP's uncertainty is well
-    calibrated, not just its mean.
+    calibrated, not just its mean. This ratio is scale-invariant, so it
+    comes out identical whether or not y_scale is set -- only the left
+    panel's displayed units change.
 
     Parameters
     ----------
     y : np.ndarray, shape (n,)
-        Actual observed values.
+        Actual observed values, in the same units the GP was fit on.
     pred_mean, pred_std : np.ndarray, shape (n,)
-        LOO-predicted mean/std at each point (from `loo_predictions`).
+        LOO-predicted mean/std at each point (from `loo_predictions`),
+        same units as `y`.
+    y_scale : float, optional
+        Set this if the GP was fit on bayes_tools.to_scaled_units(y, y_scale)
+        -- multiplies the left panel back into real units (a linear
+        rescale, so no asymmetric correction is needed).
     figsize : tuple
 
     Returns
@@ -598,18 +644,29 @@ def plot_loo_calibration(y, pred_mean, pred_std, figsize=(10, 4.5)):
     pred_std = np.asarray(pred_std, dtype=float).ravel()
     resid_z = (y - pred_mean) / np.maximum(pred_std, 1e-9)
 
+    if y_scale is not None:
+        y_plot = from_scaled_units(y, y_scale)
+        mean_plot = from_scaled_units(pred_mean, y_scale)
+        std_plot = from_scaled_units(pred_std, y_scale)
+        ylabel = "LOO-predicted mean (95% CI, real units)"
+    else:
+        y_plot = y
+        mean_plot = pred_mean
+        std_plot = pred_std
+        ylabel = "LOO-predicted mean (95% CI)"
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
-    lo = min(y.min(), pred_mean.min())
-    hi = max(y.max(), pred_mean.max())
+    lo = min(y_plot.min(), mean_plot.min())
+    hi = max(y_plot.max(), mean_plot.max())
     pad = 0.05 * (hi - lo if hi > lo else 1.0)
     ax1.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "k--", lw=1, label="Perfect calibration")
     ax1.errorbar(
-        y, pred_mean, yerr=1.96 * pred_std, fmt="o", ecolor="gray",
+        y_plot, mean_plot, yerr=1.96 * std_plot, fmt="o", ecolor="gray",
         elinewidth=1, capsize=2, markersize=5, color="tab:blue",
     )
     ax1.set_xlabel("Actual y")
-    ax1.set_ylabel("LOO-predicted mean (95% CI)")
+    ax1.set_ylabel(ylabel)
     ax1.set_title("Predicted vs. actual")
     ax1.legend(fontsize=8)
 
@@ -620,5 +677,238 @@ def plot_loo_calibration(y, pred_mean, pred_std, figsize=(10, 4.5)):
     ax2.set_ylabel("Count")
     ax2.set_title("Residual calibration")
 
+    plt.tight_layout()
+    return fig
+
+
+def plot_xi_sensitivity(
+    X, y, bounds, gp, xi_rows, acquisition_fn,
+    center=None, dims=None, n_grid=200, maximize=True,
+    ncols=4, figsize=None,
+):
+    """
+    Overlay the PI/EI acquisition curve for several xi values on the
+    same 1D slices used by plot_nd_slices -- shows directly how xi
+    reshapes where the search wants to go, rather than reading a table
+    of numbers. GP mean/CI is shown once per panel (it doesn't depend on
+    xi); only the acquisition curves and their argmax markers vary.
+
+    Parameters
+    ----------
+    X, y, bounds, gp : as in plot_nd_slices
+    xi_rows : list of dict
+        Output of bayes_tools.compare_xi_proposals -- one row per xi,
+        each with at least "xi" and "x_next".
+    acquisition_fn : callable(X_norm, gp, y_best, xi, maximize) -> scores
+        bayes_tools.pi_acquisition or bayes_tools.ei_acquisition.
+    center : array-like, shape (D,), optional
+        Point to hold fixed while slicing. Defaults to the best observed
+        point so far.
+    dims : list of int, optional
+        Which dimensions to slice. Defaults to all.
+    maximize : bool
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    from matplotlib.lines import Line2D
+
+    bounds = np.asarray(bounds, dtype=float)
+    d = bounds.shape[0]
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    y = np.asarray(y, dtype=float).ravel()
+    y_best = y.max() if maximize else y.min()
+
+    if center is None:
+        center = X[np.argmax(y)] if maximize else X[np.argmin(y)]
+    center = np.asarray(center, dtype=float).ravel()
+
+    if dims is None:
+        dims = list(range(d))
+
+    n_panels = len(dims)
+    ncols = max(1, min(ncols, n_panels))
+    nrows = int(np.ceil(n_panels / ncols))
+    if figsize is None:
+        figsize = (4 * ncols, 3.2 * nrows)
+
+    colors = plt.cm.cool(np.linspace(0, 1, max(len(xi_rows), 1)))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    axes_flat = axes.ravel()
+
+    for ax, dim in zip(axes_flat, dims):
+        grid_vals = np.linspace(bounds[dim, 0], bounds[dim, 1], n_grid)
+        grid = np.tile(center, (n_grid, 1))
+        grid[:, dim] = grid_vals
+        grid_norm = normalize(grid, bounds)
+
+        mu, sigma = gp.predict(grid_norm, return_std=True)
+        ax_acq = ax.twinx()
+        ax.plot(grid_vals, mu, "b-", lw=1.6, zorder=3)
+        ax.fill_between(grid_vals, mu - 1.96 * sigma, mu + 1.96 * sigma,
+                         alpha=0.15, color="blue", zorder=2)
+
+        for row, color in zip(xi_rows, colors):
+            acq_vals = acquisition_fn(grid_norm, gp, y_best=y_best, xi=row["xi"], maximize=maximize)
+            ax_acq.plot(grid_vals, acq_vals, color=color, lw=1.3, alpha=0.85, zorder=1)
+            ax_acq.axvline(row["x_next"][dim], color=color, ls="--", lw=1.1, alpha=0.8, zorder=4)
+
+        ax.axvline(center[dim], color="black", ls=":", lw=1, zorder=4)
+
+        ax.set_title(f"x{dim}", fontsize=10)
+        ax.set_ylabel("f(x)", fontsize=8, color="tab:blue")
+        ax_acq.set_ylabel("acq", fontsize=8)
+        ax.tick_params(labelsize=8)
+        ax_acq.tick_params(labelsize=8)
+
+    for ax in axes_flat[n_panels:]:
+        ax.axis("off")
+
+    legend_handles = [Line2D([0], [0], color="blue", lw=1.6, label="GP mean")]
+    legend_handles += [
+        Line2D([0], [0], color=color, lw=1.3, label=f"xi={row['xi']:g}")
+        for row, color in zip(xi_rows, colors)
+    ]
+    fig.legend(
+        handles=legend_handles, loc="upper center",
+        ncol=min(len(legend_handles), 5), fontsize=8, bbox_to_anchor=(0.5, 1.04),
+    )
+
+    fig.suptitle(f"Acquisition sensitivity to xi (slices through {np.round(center, 3)})",
+                 fontsize=11, y=1.1)
+    plt.tight_layout()
+    return fig
+
+
+def plot_kappa_sensitivity(
+    X, y, bounds, gp, kappa_rows, acquisition_fn,
+    center=None, dims=None, n_grid=200, maximize=True,
+    ncols=4, figsize=None,
+):
+    """
+    Overlay the UCB acquisition curve for several kappa values on the
+    same 1D slices used by plot_nd_slices -- shows directly how kappa
+    reshapes where the search wants to go. Structurally identical to
+    plot_xi_sensitivity; kept as a separate function since the parameter
+    name (kappa vs xi) and the acquisition function's kwargs differ.
+
+    Parameters
+    ----------
+    X, y, bounds, gp : as in plot_nd_slices
+    kappa_rows : list of dict
+        Output of bayes_tools.compare_kappa_proposals -- one row per
+        kappa, each with at least "kappa" and "x_next".
+    acquisition_fn : callable(X_norm, gp, kappa, maximize) -> scores
+        bayes_tools.ucb_acquisition.
+    center : array-like, shape (D,), optional
+        Point to hold fixed while slicing. Defaults to the best observed
+        point so far.
+    dims : list of int, optional
+        Which dimensions to slice. Defaults to all.
+    maximize : bool
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    from matplotlib.lines import Line2D
+
+    bounds = np.asarray(bounds, dtype=float)
+    d = bounds.shape[0]
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    y = np.asarray(y, dtype=float).ravel()
+
+    if center is None:
+        center = X[np.argmax(y)] if maximize else X[np.argmin(y)]
+    center = np.asarray(center, dtype=float).ravel()
+
+    if dims is None:
+        dims = list(range(d))
+
+    n_panels = len(dims)
+    ncols = max(1, min(ncols, n_panels))
+    nrows = int(np.ceil(n_panels / ncols))
+    if figsize is None:
+        figsize = (4 * ncols, 3.2 * nrows)
+
+    colors = plt.cm.cool(np.linspace(0, 1, max(len(kappa_rows), 1)))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    axes_flat = axes.ravel()
+
+    for ax, dim in zip(axes_flat, dims):
+        grid_vals = np.linspace(bounds[dim, 0], bounds[dim, 1], n_grid)
+        grid = np.tile(center, (n_grid, 1))
+        grid[:, dim] = grid_vals
+        grid_norm = normalize(grid, bounds)
+
+        mu, sigma = gp.predict(grid_norm, return_std=True)
+        ax_acq = ax.twinx()
+        ax.plot(grid_vals, mu, "b-", lw=1.6, zorder=3)
+        ax.fill_between(grid_vals, mu - 1.96 * sigma, mu + 1.96 * sigma,
+                         alpha=0.15, color="blue", zorder=2)
+
+        for row, color in zip(kappa_rows, colors):
+            acq_vals = acquisition_fn(grid_norm, gp, kappa=row["kappa"], maximize=maximize)
+            ax_acq.plot(grid_vals, acq_vals, color=color, lw=1.3, alpha=0.85, zorder=1)
+            ax_acq.axvline(row["x_next"][dim], color=color, ls="--", lw=1.1, alpha=0.8, zorder=4)
+
+        ax.axvline(center[dim], color="black", ls=":", lw=1, zorder=4)
+
+        ax.set_title(f"x{dim}", fontsize=10)
+        ax.set_ylabel("f(x)", fontsize=8, color="tab:blue")
+        ax_acq.set_ylabel("acq", fontsize=8)
+        ax.tick_params(labelsize=8)
+        ax_acq.tick_params(labelsize=8)
+
+    for ax in axes_flat[n_panels:]:
+        ax.axis("off")
+
+    legend_handles = [Line2D([0], [0], color="blue", lw=1.6, label="GP mean")]
+    legend_handles += [
+        Line2D([0], [0], color=color, lw=1.3, label=f"kappa={row['kappa']:g}")
+        for row, color in zip(kappa_rows, colors)
+    ]
+    fig.legend(
+        handles=legend_handles, loc="upper center",
+        ncol=min(len(legend_handles), 5), fontsize=8, bbox_to_anchor=(0.5, 1.04),
+    )
+
+    fig.suptitle(f"Acquisition sensitivity to kappa (slices through {np.round(center, 3)})",
+                 fontsize=11, y=1.1)
+    plt.tight_layout()
+    return fig
+
+
+def plot_acquisition_backtest(results, figsize=(8, 5)):
+    """
+    Boxplot comparing regret distributions from
+    bayes_tools.backtest_acquisitions -- one box per acquisition config,
+    sorted so the best (lowest median regret) is on the left. Lower is
+    better: regret is how much worse that config's pick was than the
+    best candidate actually available in that held-out split.
+
+    Parameters
+    ----------
+    results : dict
+        Output of bayes_tools.backtest_acquisitions.
+    figsize : tuple
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    names = sorted(results.keys(), key=lambda n: np.median(results[n]["regret"]))
+    data = [results[n]["regret"] for n in names]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.boxplot(data, showmeans=True)
+    ax.set_xticks(range(1, len(names) + 1))
+    ax.set_xticklabels(names, rotation=30, ha="right")
+    ax.set_ylabel("Regret (lower is better)")
+    ax.set_title("Acquisition function backtest (using held-out known points)")
+    ax.grid(alpha=0.3, axis="y")
     plt.tight_layout()
     return fig
