@@ -20,4 +20,34 @@
 
 # Capstone Project - Imperial College Business School Machine Learning & AI
 
-This is a black box optimisation project using Bayesian Optimisation.  There are eight functions to be processed with increasing dimensionality . 
+## Overview
+
+
+
+This is a black box optimisation project using Bayesian Optimisation.  There are eight functions to be processed with increasing dimensionality  (running from two to 8). The purpose is to optimise a Gaussian Processor in order to emulate the behaviour of the hidden function as closely as possible. 
+
+Bayesian Optimisation is useful in both the machine learning and physical worlds. It is useful when it is expensive to carry out the real operation (a function call or a real world activity such as biological testing). In a SAAS environment this can be useful when identifying optimal configurations for cloud infrastructure/software as measuring the effectiveness of infrastructure would normally require creation and configuration of that infrastructure which is a costly process.
+
+## Inputs & Outputs
+
+At the starting point, we received a certain number of inputs to and outputs from the hidden functions (see below). Every output is a single scalar. Inputs are constrained to be in the range [0, 1]. The initial datasets contained between ten and forty input and output points
+
+| Function No | Degree | Initial Points |
+| ----------: | -----: | -------------: |
+| 1 | 2 | 10 |
+| 2 | 2 | 10 | 
+| 3 | 3 | 15 | 
+| 4 | 4 | 30 | 
+| 5 | 4 | 20 |
+| 6 | 5 | 20 |
+| 7 | 6 | 30 |
+| 8 | 8 | 40 |
+
+
+## Challenge Objectives
+
+
+
+
+## Technical Approach 
+
