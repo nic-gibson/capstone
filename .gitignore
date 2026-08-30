@@ -218,3 +218,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 notes.md
+<<<<<<< HEAD
+=======
+CLAUDE.md
+>>>>>>> c5c3124 (refactored, cleaned up docs, cleaned up the way new data is added)
