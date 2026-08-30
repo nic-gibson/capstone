@@ -1,4 +1,6 @@
 import contextlib
+import csv
+import os
 import re
 import warnings
 from collections import Counter
@@ -47,9 +49,7 @@ def exploit_acquisition(X_norm, gp, maximize=True):
     Pure exploitation: score is just the predicted mean. Ignores
     uncertainty entirely -- the counterpart to `max_variance_acquisition`.
     Always pushes toward the GP's current best guess rather than toward
-    unexplored regions, so use this once you trust the surrogate (e.g.
-    late in optimisation, or when evaluations are expensive and you want
-    to converge rather than keep exploring).
+    unexplored regionsd.
     """
     mu, _ = gp.predict(X_norm, return_std=True)
     return mu if maximize else -mu
@@ -59,13 +59,7 @@ def pi_acquisition(X_norm, gp, y_best, xi=0.01, maximize=True):
     """
     Probability of Improvement. Returns the probability, under the GP's
     posterior, that a point beats the best observation so far by at
-    least `xi`.
-
-    Compared to UCB, PI is more exploitative: it cares about the *chance*
-    of improving at all, not *how much* you might improve by, so once a
-    region is fairly confidently better than the current best it gets
-    close to a score of 1 regardless of how much sigma remains -- it
-    won't keep chasing extra uncertainty the way UCB or max_variance do.
+    least `xi`. More exploitative than UCB. Looks at chance of improving at all.
 
     Parameters
     ----------
@@ -74,16 +68,11 @@ def pi_acquisition(X_norm, gp, y_best, xi=0.01, maximize=True):
     gp : fitted GaussianProcessRegressor
     y_best : float
         Best observed y value so far (max(y) if maximizing, min(y) if
-        minimizing). This is data, not a GP prediction, so it must be
-        passed in explicitly -- there's no way to infer it from `gp` or
-        `X_norm` alone.
+        minimizing). 
     xi : float
-        Small "improvement margin" (in raw y-units). Higher xi demands a
-        more decisive improvement before a point scores well, which
-        nudges PI to explore a bit more; xi=0 makes PI purely greedy
-        about any improvement, however marginal.
+        Small "improvement margin" (in raw y-units). 
     maximize : bool
-        Whether the underlying function is being maximised.
+        Is  the underlying function is being maximised?
 
     Returns
     -------
@@ -101,12 +90,7 @@ def pi_acquisition(X_norm, gp, y_best, xi=0.01, maximize=True):
 
 def ei_acquisition(X_norm, gp, y_best, xi=0.01, maximize=True):
     """
-    Expected Improvement. The classic "balanced" acquisition function --
-    unlike PI, which only asks *whether* a point might improve on y_best,
-    EI weighs that by *how much* it might improve by. A point with a
-    small but near-certain gain and a point with a large but uncertain
-    gain can score similarly, so EI naturally trades exploration against
-    exploitation without a manual weight like UCB's `kappa`.
+    Expected Improvement. Balanced
 
     Parameters
     ----------
@@ -115,11 +99,9 @@ def ei_acquisition(X_norm, gp, y_best, xi=0.01, maximize=True):
     gp : fitted GaussianProcessRegressor
     y_best : float
         Best observed y value so far (max(y) if maximizing, min(y) if
-        minimizing) -- data, not a GP prediction, so pass it explicitly.
+        minimizing).
     xi : float
-        Small "improvement margin" (in raw y-units), same role as in
-        `pi_acquisition`: higher xi demands a more decisive improvement
-        and nudges EI toward more exploration.
+        Small "improvement margin" (in raw y-units).
     maximize : bool
         Whether the underlying function is being maximised.
 
@@ -153,13 +135,8 @@ _ACQUISITIONS = {
 def initial_bounds(X, pad_fraction=1.0, lower_limit=None, upper_limit=None):
     """
     Construct a generous starting box from observed data alone, for use
-    when you have no domain knowledge about valid input ranges.
+    when you have no real knowledge about valid input ranges.
 
-    Note: pad_fraction defaults to 1.0 (i.e. the box is roughly double the
-    observed range) rather than a small pad like 0.1. With no domain
-    knowledge, a small pad just guarantees the box is wrong almost
-    immediately -- better to start wide and rely on `expand_bounds_if_needed`
-    to keep growing it, than to start tight and hope you got lucky.
 
     Parameters
     ----------
@@ -168,13 +145,7 @@ def initial_bounds(X, pad_fraction=1.0, lower_limit=None, upper_limit=None):
         Fraction of the observed range to add on *each* side.
     lower_limit, upper_limit : float or array-like, optional
         Hard floor/ceiling the padded bounds are not allowed to cross,
-        applied per-dimension after padding (broadcasts if a scalar).
-        Use this when you have external domain knowledge about valid
-        input ranges -- e.g. lower_limit=0.0 if X is known to never be
-        negative -- since data-derived padding alone has no way to know
-        that and will happily propose a lower bound below what's
-        actually physically achievable. Without this, `generate_next_point`
-        can and will propose x_next values outside the true valid domain.
+        applied per-dimension after padding .
 
     Returns
     -------
@@ -196,11 +167,8 @@ def initial_bounds(X, pad_fraction=1.0, lower_limit=None, upper_limit=None):
 def clip_bounds(bounds, lower_limit=None, upper_limit=None):
     """
     Clip an existing bounds array to a known hard floor/ceiling per
-    dimension, without recomputing it from data. Useful for a manually
-    specified bounds array, or one that's already been through several
-    rounds of widening, that needs to respect a known domain constraint
-    -- e.g. clip_bounds(bounds, lower_limit=0.0) if X is known to never
-    be negative.
+    dimension, without recomputing it from data. We know that X is never negative
+    so this is useful
 
     Parameters
     ----------
@@ -222,11 +190,7 @@ def clip_bounds(bounds, lower_limit=None, upper_limit=None):
 def validate_bounds_consistency(X, bounds):
     """
     Sanity-check that every observed X point actually falls within
-    `bounds`. Catches the case where padding, a manual bounds override,
-    or a known domain constraint (e.g. "X >= 0") has drifted out of sync
-    with the data actually being fed to the GP -- worth calling any time
-    bounds are constructed or modified before passing them into
-    `generate_next_point`, `fit_gp`, or the plotting tools.
+    `bounds`. 
 
     Raises
     ------
@@ -276,33 +240,22 @@ def generate_next_point(
         Exploration weight, only used for "ucb". Higher = more exploration.
     xi : float
         Improvement margin, used by "pi" and "ei" (Probability/Expected
-        Improvement). Higher xi demands a more decisive improvement
-        before a point scores well, nudging both toward more exploration;
-        xi=0 makes them purely greedy about any improvement, however small.
+        Improvement). 
     maximize : bool
         Whether the underlying black-box function is being maximised
-        (set False if you are minimising it). Used by "ucb", "exploit",
-        "pi", and "ei"; not used for "max_variance" (which ignores the
-        mean entirely).
-    n_restarts : int
+     n_restarts : int
         Number of random multi-starts for optimising the acquisition
-        function (acquisition surfaces can be multimodal, especially in
-        higher dimensions, so more restarts helps in 6D-8D problems).
+        function - more restarts helps in 6D-8D problems.
     random_state : int or None
     gp_kwargs : dict, optional
-        Extra keyword arguments forwarded to `fit_gp`, e.g.
-        {"noise_level": 0.1} if you know your function is noisy, or
-        {"n_restarts_optimizer": 20} for trickier likelihood surfaces.
-        See `fit_gp` for the full list of options.
-
+        Extra keyword arguments forwarded to `fit_gp`
+        
     Returns
     -------
     x_next : np.ndarray, shape (D,)
         Next point to evaluate, in the original (unnormalised) units.
     gp : GaussianProcessRegressor
-        The fitted GP (useful for diagnostics, e.g. checking predicted
-        mean/std at x_next, or inspecting gp.kernel_ to see the learned
-        noise level and length-scale).
+        The fitted GP for diagnostics and reporting.
     """
     if acquisition not in _ACQUISITIONS:
         raise ValueError(f"Unknown acquisition '{acquisition}'. Choose from {list(_ACQUISITIONS)}.")
@@ -374,9 +327,7 @@ def fit_gp(
     bounds : array-like, shape (D, 2)
         [(low, high), ...] per input dimension. Used to normalise inputs.
     alpha : float
-        Numerical jitter added to the kernel diagonal for stability. This
-        is NOT the observation noise level any more -- that is now learned
-        automatically via the WhiteKernel term (see `noise_level`). Keep
+        Numerical jitter added to the kernel diagonal for stability. Keep
         this small (1e-10 to 1e-6); it exists only to avoid numerical
         issues when points are close together.
     n_restarts_optimizer : int
@@ -389,8 +340,7 @@ def fit_gp(
         Initial guess for the observation noise variance, in normalised
         y-units. This is a starting point for optimisation, not a fixed
         assumption -- sklearn will adjust it to fit the data via maximum
-        marginal likelihood. Raise the starting guess if you know your
-        function evaluations are quite noisy.
+        marginal likelihood. 
     noise_level_bounds : tuple
         (low, high) bounds the noise level is allowed to move within
         during optimisation.
@@ -404,31 +354,11 @@ def fit_gp(
         interpolate through every noisy point instead of learning the
         underlying trend.
     nu : float
-        Smoothness parameter for the Matern kernel. Common choices are
-        0.5 (very rough, equivalent to an Ornstein-Uhlenbeck process),
-        1.5, 2.5 (default here -- once-differentiable, a common default
-        for physical/black-box functions that aren't perfectly smooth),
-        or np.inf (recovers the RBF kernel exactly). Lower nu assumes
-        less smoothness and is more forgiving of sharp, local features;
-        it does NOT need to be re-optimised since it's fixed rather than
-        a hyperparameter sklearn tunes.
+        Smoothness parameter for the Matern kernel.
 
     Returns
     -------
     gp : fitted GaussianProcessRegressor
-
-    Notes
-    -----
-    The Matern length-scale is fit with ARD (Automatic Relevance
-    Determination): a separate length-scale per input dimension rather
-    than one shared value. This matters most once D gets too large to
-    visually inspect the fitted surface (4D+) -- a short learned
-    length-scale on a given dimension means the function varies quickly
-    along that axis (it matters), while a length-scale pinned near the
-    upper bound means the GP found that axis close to irrelevant. See
-    `get_length_scales` to pull these out after fitting, and
-    `viz_tools.plot_nd_slices` to use them to decide which dimensions
-    are worth visualising directly.
     """
     X = np.atleast_2d(np.asarray(X, dtype=float))
     y = np.asarray(y, dtype=float).ravel()
@@ -466,12 +396,6 @@ def fit_gp(
 
 
 def _extract_kernel_params(gp):
-    """
-    Pull the Matern length-scale and WhiteKernel noise level out of a GP
-    fitted by `fit_gp`'s kernel structure: ConstantKernel * Matern + WhiteKernel.
-    Returns (mean_length_scale, noise_level); mean is taken in case the
-    length-scale is anisotropic (one value per input dimension).
-    """
     kernel = gp.kernel_
     length_scale = np.mean(np.atleast_1d(kernel.k1.k2.length_scale))
     noise_level = kernel.k2.noise_level
@@ -499,13 +423,6 @@ def get_length_scales(gp):
     Per-dimension Matern length-scales learned by an ARD-fitted GP (see
     `fit_gp`). Shape (D,) regardless of whether the kernel ended up
     isotropic or anisotropic.
-
-    A short length-scale means the function varies quickly along that
-    axis (the GP thinks it matters); a length-scale sitting near the
-    upper `length_scale_bounds` means the GP found that axis close to
-    irrelevant -- output barely changes as you move along it. Useful in
-    4D+ problems to decide which dimensions are worth a slice plot
-    (`viz_tools.plot_nd_slices`) rather than plotting all of them.
     """
     return np.atleast_1d(gp.kernel_.k1.k2.length_scale).astype(float)
 
@@ -514,16 +431,10 @@ def loo_predictions(X, y, bounds, gp_kwargs=None):
     """
     Leave-one-out cross-validated GP predictions: refit the GP once per
     observation, each time leaving that observation out, and predict at
-    the left-out point using the rest. This is the main way to validate
-    the surrogate model once D is too large to visually inspect the
-    fitted surface (roughly 4D+) -- if LOO predictions track the actual
-    values well, with residuals falling inside the predicted uncertainty,
-    the GP is a trustworthy stand-in for the true function even though
-    you can't see its shape directly.
+    the left-out point using the rest. Using this as part of the acquistion testing. 
 
-    Note this refits the GP n times, so for larger datasets (dozens of
-    points) it costs roughly n times a normal fit -- fine for the modest
-    dataset sizes typical in a BO loop, but worth being aware of.
+    This refits the GP n times, so for larger datasets (dozens of
+    points) it will be expensiv
 
     Parameters
     ----------
@@ -624,22 +535,14 @@ def compute_iteration_diagnostics(
     gp_kwargs=None, domain_grid_n=40,
 ):
     """
-    Reconstruct the same per-iteration diagnostics the old history log
-    used to persist incrementally -- but purely by replaying the ordered
-    (X, y) you already have, with no file or saved state involved.
+    Rebuild the same per-iteration diagnostics tby replaying the ordered
+    (X, y).
 
     For every point after the first `n_initial` (assumed to be the
     initial batch, arrived together rather than chosen by an acquisition
     function), this refits the GP on everything *before* that point and
-    computes what the acquisition value, GP hyperparameters, and
-    domain-wide uncertainty would have been at the moment it was
-    proposed -- then compares that to the value actually observed.
-
-    IMPORTANT: this assumes the row order in X/y is the actual
-    chronological order points were evaluated in (initial batch first,
-    then every subsequent observation in the order it arrived -- exactly
-    what you get by repeatedly calling `append_observations`). Reordering
-    rows will silently produce meaningless diagnostics.
+    computes what the acquisition value, GP hyperparameters, and uncertainty 
+    would have been when it was proposed -- then compares that to the value actually observed.
 
     Parameters
     ----------
@@ -656,9 +559,7 @@ def compute_iteration_diagnostics(
     gp_kwargs : dict, optional
         Forwarded to `fit_gp` on every refit.
     domain_grid_n : int
-        Resolution per axis for the domain-average-uncertainty grid
-        (see `propose_and_log`'s old docstring for what this measures --
-        same idea, just recomputed here instead of cached).
+        Resolution per axis for the domain-average-uncertainty grid.
 
     Returns
     -------
@@ -731,29 +632,21 @@ def compute_iteration_diagnostics(
 # default assuming y is roughly O(1). If the true function's output happens
 # to live at a very different scale (e.g. ~1e-16, as some of the capstone
 # functions do), those defaults become either meaningless or completely
-# dominant relative to the real signal -- not a numerical error, just a
-# silently degenerate acquisition function. Unlike the non-negativity
-# transform removed earlier, this is a plain LINEAR rescale (valid for any
-# sign of y), so it commutes exactly with the GP's mean and confidence
-# interval -- no asymmetric back-transform needed, just multiply by
-# y_scale wherever you need real units back.
+# dominant relative to the real signal.
 
 def fit_y_scale(y, method="std"):
     """
     Choose a scale factor to divide y by before running BO, so that
-    default hyperparameters (xi, kappa, noise_level) -- all tuned assuming
-    roughly unit-scale targets -- stay meaningful regardless of the true
-    function's actual output magnitude.
+    default hyperparameters (xi, kappa, noise_level)  stay meaningful 
+    regardless of the true function's actual output magnitude.
 
     Parameters
     ----------
     y : np.ndarray
     method : {"std", "max_abs"}
-        "std" (default): scale by the standard deviation of y. Good
-        general-purpose choice, robust to y being centred anywhere.
+        "std" (default): scale by the standard deviation of y.
         "max_abs": scale by the largest absolute value in y. Useful if
-        y is nearly constant (std close to 0) but not itself close to 0,
-        where dividing by a tiny std would overinflate the scaled values.
+        y is nearly constant (std close to 0) but not itself close to 0.
 
     Returns
     -------
@@ -778,12 +671,7 @@ def to_scaled_units(y, y_scale):
 
 def from_scaled_units(y_scaled, y_scale):
     """
-    Multiply back by y_scale to recover real units. Since the transform
-    is linear, this works identically for a mean, a std, or a raw value
-    -- e.g. from_scaled_units(pred_mean_scaled, y_scale) and
-    from_scaled_units(pred_std_scaled, y_scale) are both correct, and the
-    resulting mean +/- 1.96*std interval is exactly the real-unit interval
-    (no asymmetric correction needed, unlike a nonlinear transform).
+    Multiply back by y_scale to recover real units.
     """
     return np.asarray(y_scaled, dtype=float) * y_scale
 
@@ -905,7 +793,7 @@ def print_xi_comparison(rows):
 # Comparing kappa values (UCB) without spending real evaluations
 # ---------------------------------------------------------------------------
 #
-# Same idea as compare_xi_proposals, for UCB's kappa instead: fit ONE GP on
+# Much as compare_xi_proposals, for UCB & kappa instead: fit ONE GP on
 # the current data, hold it fixed, and see where each candidate kappa would
 # send the search. kappa only affects "ucb" -- it has no effect on
 # "max_variance", "exploit", "pi", or "ei".
@@ -1025,8 +913,7 @@ def backtest_acquisitions(
 
     Parameters
     ----------
-    X, y : all data collected so far. More points = more informative
-        splits; most useful with a reasonable initial batch (10+ points).
+    X, y : all data collected so far. More points = more informative splits.
     bounds : array-like, shape (D, 2)
     configs : list of dict
         Acquisition setups to compare, e.g.:
@@ -1164,6 +1051,8 @@ def fitting(label):
     the totals are reported in full, and the fit itself is unaffected -- only
     where the messages go changes. Silent if the block raised nothing.
 
+    This code entirely written by Claude to make output readable. 
+
     Usage
     -----
         with fitting("leave-one-out over 3 candidate targets"):
@@ -1190,3 +1079,108 @@ def fitting(label):
           + (f", {len(tally)} distinct" if len(tally) > 1 else "") + ":")
     for msg, count in tally.most_common():
         print(f"  {count:>4} x  {msg}")
+
+
+# ---------------------------------------------------------------------------
+# Weekly observation store (weekly_data/function_N/{inputs,outputs}.csv)
+# ---------------------------------------------------------------------------
+#
+# Two flat CSVs per function, holding ONLY the collected observations -- the
+# initial batch stays in its .npy files and is never touched.
+#
+#   inputs.csv   x0..x{D-1}, one row per point proposed, 6 dp
+#   outputs.csv  y,          one row per result returned
+#
+# There is deliberately NO week column. Alignment is positional and the
+# invariant is:
+#
+#     len(inputs) - len(outputs) in (0, 1)
+#
+# 0 means every proposal has a result. 1 means the last input row is this
+# week's proposal, still awaiting its result ("pending").
+#
+# `save_proposal` REWRITES inputs.csv rather than appending: it writes the
+# resulted rows plus the current proposal. Re-running a notebook any number of
+# times therefore leaves exactly one row per week, so there is no way to
+# double-record and no way for the two files to drift out of alignment.
+#
+# Row order is chronological and load-bearing: `compute_iteration_diagnostics`
+# replays it, and `EXCLUDE_FROM_FIT` indexes into it positionally. Never
+# reorder rows.
+
+WEEKLY_ROOT = "weekly_data"
+
+
+def _weekly_paths(function_n, root=WEEKLY_ROOT):
+    d = os.path.join(root, f"function_{function_n}")
+    return d, os.path.join(d, "inputs.csv"), os.path.join(d, "outputs.csv")
+
+
+def _read_csv_rows(path, n_cols):
+    """Read a headed numeric CSV into an (n, n_cols) float array. Missing -> empty."""
+    if not os.path.exists(path):
+        return np.empty((0, n_cols))
+    rows = []
+    with open(path, newline="") as fh:
+        for rec in csv.reader(fh):
+            if not rec or rec[0].lstrip().startswith("#"):
+                continue
+            try:
+                rows.append([float(v) for v in rec[:n_cols]])
+            except ValueError:
+                continue          # header line
+    return np.array(rows, dtype=float).reshape(-1, n_cols)
+
+
+def load_collected(function_n, D, root=WEEKLY_ROOT, verbose=True):
+    """Load a function's collected observations from its weekly CSVs.
+
+    Returns
+    -------
+    new_X : (n, D)   inputs that HAVE a recorded result -- what the model sees
+    new_y : (n,)     the matching results
+    pending_X : (p, D) with p in {0, 1} -- proposed but not yet resulted
+
+    Raises an exception if the two files are more than one row out of step, which means a
+    week was skipped or `record_results.py` was not run.
+    """
+    _, ipath, opath = _weekly_paths(function_n, root)
+    Xi = _read_csv_rows(ipath, D)
+    yi = _read_csv_rows(opath, 1).ravel()
+    gap = len(Xi) - len(yi)
+    if gap not in (0, 1):
+        raise ValueError(
+            f"function {function_n}: inputs.csv has {len(Xi)} rows and "
+            f"outputs.csv {len(yi)} -- expected a difference of 0 or 1. "
+        )
+    new_X, pending_X = Xi[:len(yi)], Xi[len(yi):]
+    if verbose:
+        print(f"weekly store: {len(new_X)} resulted observation(s)"
+              + (f", 1 pending proposal {np.round(pending_X[0], 6)}" if gap else
+                 ", none pending"))
+        if gap:
+            print("  NOTE the pending row will be REPLACED when this notebook saves its proposal")
+    return new_X, yi, pending_X
+
+
+def save_proposal(function_n, new_X, x_next, root=WEEKLY_ROOT, verbose=True):
+    """Rewrite inputs.csv as the resulted rows plus `x_next`, at 6 dp.
+
+    Rewrite, not append -- see the module note above. `new_X` must be the
+    RESULTED rows (as returned by `load_collected`), not including any pending
+    row, so the pending row is replaced rather than duplicated.
+    """
+    d, ipath, _ = _weekly_paths(function_n, root)
+    os.makedirs(d, exist_ok=True)
+    rows = np.vstack([np.atleast_2d(new_X), np.asarray(x_next, dtype=float).reshape(1, -1)])
+    D = rows.shape[1]
+    with open(ipath, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow([f"x{j}" for j in range(D)])
+        for r in rows:
+            w.writerow([f"{v:.6f}" for v in r])
+    if verbose:
+        print(f"wrote {ipath}: {len(rows)} row(s) "
+              f"({len(rows) - 1} resulted + 1 proposal)")
+        print("  proposal row: " + "-".join(f"{v:.6f}" for v in rows[-1]))
+    return ipath
