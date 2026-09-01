@@ -1164,7 +1164,7 @@ def load_collected(function_n, D, root=WEEKLY_ROOT, verbose=True):
 
 
 def save_proposal(function_n, new_X, x_next, root=WEEKLY_ROOT, verbose=True):
-    """Rewrite inputs.csv as the resulted rows plus `x_next`, at 6 dp.
+    """Rewrite inputs.csv as the resulted rows plus `x_next`, at full precision.
 
     Rewrite, not append -- see the module note above. `new_X` must be the
     RESULTED rows (as returned by `load_collected`), not including any pending
@@ -1178,9 +1178,9 @@ def save_proposal(function_n, new_X, x_next, root=WEEKLY_ROOT, verbose=True):
         w = csv.writer(fh)
         w.writerow([f"x{j}" for j in range(D)])
         for r in rows:
-            w.writerow([f"{v:.6f}" for v in r])
+            w.writerow([repr(float(v)) for v in r])
     if verbose:
         print(f"wrote {ipath}: {len(rows)} row(s) "
               f"({len(rows) - 1} resulted + 1 proposal)")
-        print("  proposal row: " + "-".join(f"{v:.6f}" for v in rows[-1]))
+        print("  proposal row: " + "-".join(repr(float(v)) for v in rows[-1]))
     return ipath
