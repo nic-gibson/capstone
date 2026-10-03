@@ -1,3 +1,8 @@
+import contextlib
+import re
+import warnings
+from collections import Counter
+
 import numpy as np
 from scipy.stats import norm
 from sklearn.gaussian_process.kernels import Matern, ConstantKernel, WhiteKernel
@@ -1121,3 +1126,67 @@ def print_backtest_summary(results):
     print("-" * len(header))
     for name, mean_r, med_r, mean_y in rows:
         print(f"{name:>12} | {mean_r:12.4g} | {med_r:14.4g} | {mean_y:14.4g}")
+
+
+# ---------------------------------------------------------------------------
+# Notebook output hygiene
+# ---------------------------------------------------------------------------
+
+_PINNED_MSG = re.compile(
+    r"dimension (\d+) of parameter (\S+) is close to the specified "
+    r"(lower|upper) bound (\S+)\."
+)
+
+
+def _summarise(w):
+    """Compress one captured warning to a single readable line."""
+    m = _PINNED_MSG.search(str(w.message))
+    if m:
+        dim, param, side, bound = m.groups()
+        return f"{w.category.__name__}  {param} (dim {dim}) pinned at {side} bound {bound}"
+    return f"{w.category.__name__}  {str(w.message).split('. ')[0]}"
+
+
+@contextlib.contextmanager
+def fitting(label):
+    """Hold back warnings raised while fitting, then report them deduplicated.
+
+    Every GP fit can raise a burst of sklearn ConvergenceWarnings reporting a
+    hyperparameter pinned at one of its bounds. Those are worth keeping -- a
+    pinned length-scale means the GP considers that axis close to irrelevant,
+    which is real evidence (see `get_length_scales`) -- but they go to stderr,
+    so left alone they land in the middle of whatever a cell is printing and
+    break tables up. A single `loo_predictions` call over a dozen points can
+    emit dozens of near-identical lines.
+
+    This context manager captures them for the duration of the block and then
+    prints one line per *distinct* message with a count. Nothing is suppressed:
+    the totals are reported in full, and the fit itself is unaffected -- only
+    where the messages go changes. Silent if the block raised nothing.
+
+    Usage
+    -----
+        with fitting("leave-one-out over 3 candidate targets"):
+            ...   # all the GP fitting
+        ...       # then print freely; no warning can interrupt it
+
+    Put every fit for a cell inside the block and do the printing after it,
+    rather than interleaving fit/print/fit/print.
+
+    Parameters
+    ----------
+    label : str
+        Short description of what the block is fitting, shown in the report so
+        it is obvious which block produced which burst.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield
+    if not caught:
+        return
+    tally = Counter(_summarise(w) for w in caught)
+    n = sum(tally.values())
+    print(f"[fitting: {label}] {n} warning{'' if n == 1 else 's'} held back"
+          + (f", {len(tally)} distinct" if len(tally) > 1 else "") + ":")
+    for msg, count in tally.most_common():
+        print(f"  {count:>4} x  {msg}")
