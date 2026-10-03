@@ -1,23 +1,3 @@
-    Section 1: project overview
-        Briefly describe the BBO capstone project and its purpose.
-        What is the overall goal of the BBO capstone project? Why is it relevant in real-world ML? What’s the high-level idea?
-        How would this BBO capstone project support you in your current or future career?
-    Section 2: inputs and outputs
-
-        Clearly state what your model receives and returns.
-        What are the inputs (query format, dimensions, constraints, etc.)? What is the expected output (response value, performance signal, etc.)? Include example formats, if possible.
-    Section 3: challenge objectives
-
-        Outline what you are trying to achieve within the BBO capstone project.
-        Is the goal to minimise or maximise the function(s)? What constraints or limitations must you consider (e.g. number of queries, response delay and unknown function structure)?
-    Section 4: technical approach
-
-        Describe the strategies you used across your first three query submissions. You’re encouraged to treat this section as a living record – continue updating it as your approach evolves throughout the BBO capstone project.
-        What ML methods or heuristics do you use? Will you model the unknown function? Would you consider using SVMs, regressions or Bayesian techniques? 
-        How do you balance exploration and exploitation? What makes your approach thoughtful or unique?
-
-
-
 # Capstone Project - Imperial College Business School Machine Learning & AI
 
 ## Overview
@@ -42,6 +22,26 @@ At the starting point, we received a certain number of inputs to and outputs fro
 | 6 | 5 | 20 |
 | 7 | 6 | 30 |
 | 8 | 8 | 40 |
+
+
+## Challenge Objectives
+
+This is a maximisation problem so the objective is to maximise each of the 8 hidden functions. The task is constrained by the lack of information on the nature of the functions. The task starts with a certain number of initial points supplied and, each week, the y value from a proposed Xn values can be requested - once per week. Each function may have entirely different features and some may be much more noisy than others. In the higher order functions (6, 7 and 8) the provided set of initial values provides a very small proportion of the total volume of the problem space. The only known constraint on the Xn values is that they are all between 0.0 and 1.0 
+
+
+## Technical Approach 
+
+Rather than choosing a single approach, I built multiple acquisition functions and set of tools designed to test those. I built the following acquisition functions
+
+* UCB 
+* maximum variance
+* pure exploit using just the mean 
+* probability of improvement
+* expected improvement
+
+I use the initial data to experiment and identify potentially useful acquisition functions. I built tools to use the initial data as training and validation sets and compared each functions performance. I followed a similar approach with the values of hyperparameters (_xi_ and _kappa_). Each week I review the acquisition functions and their hyperparameters to determine if either needs to be changed. At each stage I've used some visulation tools and leave one out evalution to test if I'm still following the right approach to whether exploitation or exploration is required. 
+
+
 
 
 ## Week 1 Summary (see notebook for more detail)
@@ -89,3 +89,16 @@ building a testing framework that functioned better.
 * Function 6: Added upper_limit=1.0 and the predicted-gain rule, giving KAPPA=0.25. x4 is monotone, so floor contact is expected.
 * Function 7: Switched to exploit over the same four axes, because no kappa predicted a gain. Bounds became the true domain. Result 1.4341, a new best.
 * Function 8: Bounds became [0,1]. The x4 confound was identified (all three collected points share x4 = 0.586936), so the proposal moves x4 alone to 1.0. Moved to the CSV store.
+
+## Week 5 Summary
+
+Modified my approach to storing weekly data and added the weekly_data directory. All functions now write their proposals to `weekly_data/functionX/input.csv`. On receipt of evaluation this must be saved to output.txt and the `record_results.py` function run. That will write the Y data received to `weekly_data/functionX/output.csv`. Functions now read both the provided data from `initial_data` and the weekly data from `weekly_data`.
+
+* Function 1: KAPPA dropped to 2.0 because kappa=3 hit the box corner. The proposal gave y = +0.031, the new incumbent.
+* Function 2: Moved to the CSV store. No change to approach.
+* Function 3: KAPPA dropped to 0.5 because 1.0 now performed worse. Added the pairwise scatter plot.
+* Function 4: Documentation edits only.
+* Function 5: The in-domain result of 2917.48 became the incumbent. A frozen-axis confound was flagged, so the proposal is a test with x0 set to 0.
+* Function 6: Switched to max_variance because no kappa above 0 beat the incumbent. The corner proposal [0,0,0,0,0] returned -2.308.
+* Function 7: Back to ucb with KAPPA=0.5, as the predicted-gain rule had changed. Result 1.4353.
+* Function 8: The x4 test resolved the confound as an artefact. x4 came off the held list and kappa rose to 0.5. The first acquisition-driven proposal in three weeks gave 9.996, a new incumbent.

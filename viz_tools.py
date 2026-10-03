@@ -600,6 +600,108 @@ def plot_nd_slices(
     return fig
 
 
+def plot_pairwise_scatter(
+    X, y, dims=None, highlight=None, significant_dims=None,
+    cmap="viridis", y_scale=None, figsize=None,
+):
+    """
+    Lower-triangle grid of raw-data scatter plots: one panel per pair of
+    axes, points coloured by y on a single shared colorbar. Generalises
+    the "x vs x coloured by y" view plot_2d_bo gives for D=2 to any D,
+    without needing a fitted GP -- a general look at pairwise axis
+    relationships in the observed data itself.
+
+    Parameters
+    ----------
+    X, y : observed data, shapes (n, D) and (n,)
+    dims : list of int, optional
+        Which dimensions to include. Defaults to all D of them; for large
+        D this is C(D, 2) panels, so pass a subset to focus on specific
+        axes (e.g. the most sensitive ones from get_length_scales).
+    highlight : array-like, shape (D,), optional
+        A single point (e.g. x_next or the incumbent) marked with a red
+        star on every panel.
+    significant_dims : list of int, optional
+        Dimensions considered informative (e.g. by GP mean-variation or
+        Spearman rank -- whatever ranking the notebook already computed).
+        Their axis labels are bolded everywhere they appear, and a panel
+        gets a bold coloured border when BOTH its axes are in this list --
+        the pairing of two informative axes is the strongest candidate for
+        "the chart that matters" in the grid.
+    y_scale : float, optional
+        Set this if the GP was fit on bayes_tools.to_scaled_units(y, y_scale)
+        -- multiplies the colour values back into real units (a linear
+        rescale, so no asymmetric correction is needed).
+    figsize : tuple, optional
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    X = np.atleast_2d(np.asarray(X, dtype=float))
+    y = np.asarray(y, dtype=float).ravel()
+    if y_scale is not None:
+        y = from_scaled_units(y, y_scale)
+
+    if dims is None:
+        dims = list(range(X.shape[1]))
+    n = len(dims)
+    if n < 2:
+        raise ValueError("need at least 2 dimensions to plot pairwise relationships")
+    significant_dims = set(significant_dims or [])
+
+    if figsize is None:
+        figsize = (2.4 * (n - 1), 2.4 * (n - 1))
+    fig, axes = plt.subplots(n - 1, n - 1, figsize=figsize, squeeze=False)
+
+    vmin, vmax = y.min(), y.max()
+    sc = None
+    for row in range(1, n):
+        for col in range(n - 1):
+            ax = axes[row - 1, col]
+            if col >= row:
+                ax.axis("off")
+                continue
+            dx, dy = dims[col], dims[row]
+            sc = ax.scatter(
+                X[:, dx], X[:, dy], c=y, cmap=cmap, edgecolor="black",
+                linewidths=0.4, s=28, vmin=vmin, vmax=vmax,
+            )
+            if highlight is not None:
+                h = np.asarray(highlight, dtype=float).ravel()
+                ax.scatter(h[dx], h[dy], c="red", marker="*", s=160,
+                           edgecolor="black", zorder=5)
+
+            y_bold = dy in significant_dims
+            x_bold = dx in significant_dims
+            if col == 0:
+                ax.set_ylabel(f"x{dy}", fontsize=8,
+                               fontweight="bold" if y_bold else "normal")
+            else:
+                ax.set_yticklabels([])
+            if row == n - 1:
+                ax.set_xlabel(f"x{dx}", fontsize=8,
+                               fontweight="bold" if x_bold else "normal")
+            else:
+                ax.set_xticklabels([])
+            ax.tick_params(labelsize=7)
+
+            if x_bold and y_bold:
+                for spine in ax.spines.values():
+                    spine.set_color("crimson")
+                    spine.set_linewidth(2.0)
+
+    if sc is not None:
+        cb = fig.colorbar(sc, ax=axes, shrink=0.8, pad=0.02)
+        cb.set_label("y" if y_scale is None else "y (real units)")
+
+    fig.suptitle("Pairwise axis relationships, coloured by y"
+                 + ("" if not significant_dims else
+                    " (bold axes / red border = most informative pair)"),
+                 fontsize=11)
+    return fig
+
+
 def plot_loo_calibration(y, pred_mean, pred_std, y_scale=None, figsize=(10, 4.5)):
     """
     Leave-one-out calibration check for the GP surrogate (feed it the
