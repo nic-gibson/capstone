@@ -102,3 +102,16 @@ Modified my approach to storing weekly data and added the weekly_data directory.
 * Function 6: Switched to max_variance because no kappa above 0 beat the incumbent. The corner proposal [0,0,0,0,0] returned -2.308.
 * Function 7: Back to ucb with KAPPA=0.5, as the predicted-gain rule had changed. Result 1.4353.
 * Function 8: The x4 test resolved the confound as an artefact. x4 came off the held list and kappa rose to 0.5. The first acquisition-driven proposal in three weeks gave 9.996, a new incumbent.
+
+## Week 6 Summary
+
+** Accidentally committed the code for this week on the week 5 branch already **
+
+* Function 1: The mode switch moved to 2.6→2.7, so KAPPA is 2.5. Added the ACKNOWLEDGE_SIGN_RISK gate.
+* Function 2: x1's length-scale came off the pin (about 7.8), but x1 stays held. The proposal is [0.705426, 0.926564].
+* Function 3: KAPPA set to 0.35, a deliberate bet against the backtest favouring exploit. Freeing x1 was tested and failed the hull check, so x1 stays held.
+* Function 4: Added the pairwise scatter plot. exploit unchanged.
+* Function 5: No notebook change. The x0 = 0 test returned 2908.35, which suggests x0 is flat (inferred).
+* Function 6: max_variance kept. The proposal is [1, 0, 1, 0, 1]. The notebook's header text is stale.
+* Function 7: x1 released, with its length-scale at 2.14. Only x2 stays held. The proposal sits on the x0 lower bound, which is expected for a monotone axis.
+* Function 8: Notebook code unchanged. kappa stays at 0.5 with a thin predicted gain. x7 is still held and flagged as confounded.
