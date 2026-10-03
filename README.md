@@ -79,3 +79,13 @@ building a testing framework that functioned better.
 * Function 7: Code changes only. Result 1.3271.
 * Function 8: No change to approach. The proposal had three coordinates on the 0.0 floor.
 
+## Week 4 Summary
+
+* Function 1: Added upper_limit=1.0. The mode switch moved from kappa 8→10 to 3→4, and KAPPA=3.0 was kept as the last usable step. Moved to the CSV store.
+* Function 2: Added upper_limit=1.0. x1's length-scale pinned, so kappa 0 to 2 hit the x1=0 floor. KAPPA=3.0 was tried then reverted. The fix was to hold x1 and scan x0.
+* Function 3: Gap-to-length-scale ratio fell from 1.35 to 0.90, so switched to ucb with kappa=1.0. Added upper_limit=1.0.
+* Function 4: Added EXCLUDE_FROM_FIT = [0] to drop the -215 point from the fit. Length-scales halved, and the UCB mode switch moved to kappa 1.5 to 2. Moved to the CSV store.
+* Function 5: The 6-dp rounding tripped the bounds check, which exposed the [0,1] domain. Bounds rebuilt and the three out-of-domain points excluded from the fit. x0 and x1 held, x2 and x3 searched. Moved to the CSV store.
+* Function 6: Added upper_limit=1.0 and the predicted-gain rule, giving KAPPA=0.25. x4 is monotone, so floor contact is expected.
+* Function 7: Switched to exploit over the same four axes, because no kappa predicted a gain. Bounds became the true domain. Result 1.4341, a new best.
+* Function 8: Bounds became [0,1]. The x4 confound was identified (all three collected points share x4 = 0.586936), so the proposal moves x4 alone to 1.0. Moved to the CSV store.
